@@ -2,6 +2,7 @@
   "name": "dsh-chat",
   "version": "0.1.0",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
   "description": "Yunzai QQ chat bridge with a pinned DSH ACP backend and scoped MCP tools",
   "engines": {

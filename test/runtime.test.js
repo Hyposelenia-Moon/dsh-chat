@@ -64,6 +64,20 @@ test('unsupported image capability falls back to text without fetching or sendin
     assert.equal(prompt.length,1); assert.match(prompt[0].text,/没有声明图片输入能力/);
   } finally {await f.close();}
 });
+test('a failed turn insert still releases the MCP grant for the next message',async()=>{
+  const f=fixture(); try {
+    const prepare=f.runtime.db.prepare.bind(f.runtime.db);
+    let failed=false;
+    f.runtime.db.prepare=sql=>{
+      if(!failed && sql.includes('INSERT INTO turns')){failed=true;throw new Error('disk full');}
+      return prepare(sql);
+    };
+    await f.runtime.handleEvent(event('第一句'));
+    assert.match(f.sent.at(-1).text,/disk full/);
+    await f.runtime.handleEvent(event('第二句',2));
+    assert.match(f.sent.at(-1).text,/你好，已收到/);
+  } finally {await f.close();}
+});
 test('free model sensitive-input guard remains active when its warning is disabled',async()=>{
   const f=fixture({models:{allowFree:true,freePromptWarning:false}}); try {
     f.runtime.sessions.ensure=async()=>{

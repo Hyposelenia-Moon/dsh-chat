@@ -19,7 +19,7 @@ class Fake extends EventEmitter {
   start(){return Promise.resolve();}
   async request(method,params){this.calls.push({method,params});
     if(method==='session/new')return{sessionId:`session-${++this.count}`,configOptions:this.configOptions};
-    if(method==='session/resume'){if(this.resumeError)throw this.resumeError;return{configOptions:this.configOptions};}
+    if(method==='session/resume'){if(this.resumeError)throw this.resumeError;return this.resumeResult ?? {configOptions:this.configOptions};}
     if(method==='session/set_config_option') {
       if(this.optionError)throw this.optionError;
       this.configOptions=this.configOptions.map(o=>o.id===params.configId?{...o,currentValue:params.value}:o);
@@ -77,6 +77,18 @@ test('backend-selected free model is rejected when no explicit default is config
   acp.configOptions=acp.configOptions.map(o=>o.id==='model'?{...o,currentValue:free}:o);
   await assert.rejects(sessions.ensure(ctx),/免费模型/);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions').get().n,0);
+});
+
+test('resume without configOptions keeps the stored model instead of failing',async t=>{
+  const {sessions,acp,db}=setup(t,{models:{default:'deepseek-account/deepseek-flash'}});
+  const first=await sessions.ensure(ctx);
+  assert.equal(db.prepare('SELECT model FROM sessions WHERE chat_id=?').get(ctx.chatId).model,main);
+  acp.emit('exit',{});
+  acp.resumeResult={};                       // ACP 未返回 configOptions
+  const resumed=await sessions.ensure(ctx);
+  assert.deepEqual(resumed.configOptions,[]);
+  assert.equal(resumed.sessionId,first.sessionId);
+  assert.equal(db.prepare('SELECT model FROM sessions WHERE chat_id=?').get(ctx.chatId).model,main);
 });
 
 test('cancelled session waits for drain before resume, reset deletes only mapping',async t=>{

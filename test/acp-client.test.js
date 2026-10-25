@@ -93,12 +93,20 @@ test('invalid stdout fails protocol rather than being displayed as QQ text', asy
   await assert.rejects(acp.request('bad'),{code:'ACP_PROTOCOL'});
 });
 
-test('lost session/new mutation response tears down ambiguous connection', async t => {
+test('lost session/new keeps in-flight requests alive, then reconnects', async t => {
   const acp=client(t);await acp.start();
-  const concurrent=acp.request('echo',{delay:500});
-  const rejected=assert.rejects(concurrent,{code:'ACP_SESSION_UNCERTAIN'});
+  const exit=once(acp,'exit');
+  const inFlight=acp.request('echo',{delay:100});
   await assert.rejects(acp.request('session/new',{mode:'hang'},{timeoutMs:20}),{code:'ACP_TIMEOUT'});
-  await rejected;assert.equal(acp.active,false);
+  assert.equal(acp.active,false);
+  // New work is refused while the connection is degraded...
+  await assert.rejects(acp.request('echo',{}),{code:'ACP_DEGRADED'});
+  // ...but the request already on the wire is not aborted.
+  assert.deepEqual(await inFlight,{delay:100});
+  await exit;
+  assert.equal(acp.child,null);
+  assert.equal(acp.degraded,null);
+  await assert.rejects(acp.request('echo',{}),{code:'ACP_OFFLINE'});
 });
 
 test('stderr credentials are redacted across partial chunks', async t => {

@@ -100,4 +100,4 @@ npm audit --omit=dev
 
 `scripts/backend-smoke.mjs` 面向真实已准备的后端；`npm run smoke` 使用模拟 ACP / QQ 与真实 MCP SDK 协议检查。二者验证范围不同。
 
-源码采用 MIT；依赖和 fork 的来源、许可证见 `THIRD_PARTY.md`。构建并分发 DSH 时需另外保留它自己的 LICENSE 和 notices。
+源码采用 GPL-3.0-only，全文见 `LICENSE`；再次分发插件或其修改版时须同样以 GPL-3.0 提供对应源码。依赖和 fork 的来源、许可证见 `THIRD_PARTY.md`。构建并分发 DSH 时需另外保留它自己的 LICENSE 和 notices。

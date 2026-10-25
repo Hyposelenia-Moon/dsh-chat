@@ -1,0 +1,81 @@
+enabled: true
+backend:
+  path: ''
+  profile: qq
+  expectedCommit: ''
+  dshHome: ''
+  patchPath: ''
+  requestTimeoutMs: 180000
+  startupTimeoutMs: 30000
+chat:
+  enabled: true
+  privateEnabled: true
+  atEnabled: true
+  prefix: '#聊'
+  maxMessageLength: 1500
+  maxInputLength: 20000
+  quoteReply: true
+  outputMode: split
+permissions:
+  masters: []
+  groupWhitelist: []
+  allowAllGroups: false
+  allowOwnerLocalTools: false
+  toolCallsPerMinute: 20
+  groupOverrides: {}
+models:
+  default: ''
+  fallback: []
+  allowFree: false
+  freePromptWarning: true
+  groupDefaults: {}
+  reasoningEffort: ''
+persona:
+  text: '你是 QQ 聊天助手。自然、简洁地交流。只通过已授权的 QQ 工具行动。'
+queue:
+  concurrency: 2
+  maxPendingPerChat: 10
+  maxPendingTotal: 100
+  timeoutMs: 180000
+features:
+  stickers: false
+  qzone: false
+  letters: false
+  memory: false
+  learning: false
+  files: false
+  voice: false
+  images: true
+memory:
+  enabled: false
+  autoExtract: false
+  extractionModel: ''
+  maxInjected: 5
+  maxAutomaticPerDay: 20
+learning:
+  enabled: false
+  autoReflect: false
+  requireApproval: true
+  maxCandidatesPerDay: 3
+stickers:
+  enabled: false
+  autoCollect: false
+  maxPerGroupPerHour: 10
+  maxBytes: 2097152
+letters:
+  enabled: false
+qzone:
+  enabled: false
+scheduler:
+  enabled: true
+  intervalMs: 15000
+  maxAttempts: 3
+media:
+  maxBytes: 8388608
+  timeoutMs: 15000
+  ttlHours: 24
+  proxyUrl: ''
+logging:
+  includeContent: false
+  maxBytes: 5242880
+  retentionDays: 30

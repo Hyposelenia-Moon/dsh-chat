@@ -105,3 +105,15 @@ smoke 只执行 initialize → new → close → resume → close，显示后端
 取消/超时会先 `session/cancel`，再 `session/close` 等待后端释放。下轮恢复须等 close 应答，防止旧轮更新混入新轮；若 close 也超时，会关闭整个 ACP 子进程，其他 chat 在下次请求时恢复。日志只对常见凭据样式做脱敏，避免启用内容日志记录敏感对话。
 
 本包保留 fork 的 MIT 来源链接。构建与分发 DSH 时，应连同 fork LICENSE 和其第三方 notices 一起分发；不要只复制启动器。安全更新采用人工评估、依赖审计及固定 commit 升级，更新 `pin.json` 前重跑契约/QQ 验收。
+
+## WebUI（可选）
+
+官方界面不随 fork 构建，直接安装同版本的 npm 包即可：
+
+```powershell
+dsh plugin --profile web add @deepseek-ai/dsh-web-app@0.2.1-rc.3
+```
+
+插件用 `#dshwebui`（主人私聊）启动 `--profile web`，只监听 `127.0.0.1` 的随机端口，并只在私聊里返回带 token 的地址；`#dshwebui stop` 关闭。web profile 缺失或未装 `@deepseek-ai/dsh-web-app` 时命令会给出安装提示。
+
+npm 版 `dsh-host-webserver` 采集索引注入时不传 `peer`，而 fork 的 `packages/api/remote-access` 会读 `peer.principal`；直接启动会 400。fork 已在该包源码与构建产物中加空 peer 守卫（本机单用户没有非主人 Peer），重建后端时要保留这处补丁。

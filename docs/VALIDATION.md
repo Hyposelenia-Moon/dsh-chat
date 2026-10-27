@@ -4,8 +4,8 @@
 
 ## 自动检查
 
-- `npm test`：**84 项通过**，0 失败，0 跳过。
-- `npm run check`：**105** 个 JavaScript/ESM 文件语法检查通过（含 `backend/vendor`）。
+- `npm test`：**89 项通过**，0 失败，0 跳过。
+- `npm run check`：**107** 个 JavaScript/ESM 文件语法检查通过（含 `backend/vendor`）。
 - `npm audit --omit=dev`：0 个已知漏洞。直接依赖为 MCP SDK 1.32.2、undici 7.30.1、yaml 2.9.1。
 - Yunzai 目录结构加载：在临时 `Yunzai/plugins/dsh-chat` 中加载真实插件入口、三类 apps 和锅巴接口；验证本地服务启动且未 spawn ACP。
 - MCP：官方 SDK 客户端连接真实本机 HTTP 服务，验证 initialize、tools/list、tools/call、身份绑定、跨 chat 隔离、轮次失效、输入约束、Origin 拒绝。
@@ -23,6 +23,14 @@
 - 裁剪：移除 33 个无关重依赖（-1,223.7 MB）与 desktop/web/client 源码（约 125 MB），fork 2,381.3 MB → **1,032.8 MB**；裁剪后上述 smoke 与 prompt 仍通过。
 - 隐私：内置 OFM 副本移除 `vendor/channel-pack/`（含 `RACCOON_PHONE_CIPHER_SECRET` 等第三方硬编码凭据）与 EAC 封条材料；移除后 smoke 与真实 prompt 仍通过。
 - `dsh-our-free-model` 的 OpenCode/beam 条目在 2026-10-27 21:47 的自检中全部地区受限或额度用尽；Kilo 池可用。
+
+## 模型可用性（2026-10-27，23 个 `our-free-model` 模型）
+
+- Kilo 车道 16 个：**11 个 HTTP 200**（其中 9 个返回文本“正常”；`nemotron-3-ultra-550b-a55b:free` 与 `nemotron-3.5-lightning:free` 返回 200 但正文为空，仅推理内容或空流），**5 个失败**：`liquid/lfm-2.5-2.6b:free`、`poolside/laguna-xs-2.1:free`、`recursive/flint-v1.0:free`、`xingchen-agi/xing4.0-29b-a4b:free` 为上游 429 限流，`stealth/glyph-cluster` 为上游 503。
+- 可直接使用（有正文）：`kilo-auto/free`、`openrouter/free`、`reflection/beam-free`、`nvidia/nemotron-3.5-super-vl:free`、`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free`、`nvidia/nemotron-3.5-content-safety:free`、`dots-studio/dots-3-note-preview:free`、`cohere/north-mini-code:free`、`poolside/laguna-s-2.1:free`。
+- OpenCode/zen 车道 7 个（`flint-40b-free`、`mimo-v2.6-flash-free`、`glm-5.3-flash-free`、`jev-1.13-free`、`deepseek-v4.1-flash-free`、`nemotron-3.5-lightning-free`、`nemotron-3.5-super-vl-free`）未直连测试；OFM 自检显示全部被上游限流或地区封锁。
+- `our-free-model-region/beam-free` 此前为地区受限；`deepseek-account` 两模型未重复测试（`deepseek-flash` 已有真实 prompt 记录）。
+- 建议 QQ 侧默认用 `our-free-model/kilo-auto/free`；切换到低速模型时先 `#dsh模型列表` 确认后端实际返回。
 
 ## 尚需部署环境验收
 

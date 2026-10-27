@@ -11,8 +11,8 @@ DSH-Chat — Yunzai / NapCat 的 QQ 聊天插件：Yunzai 负责 QQ 登录、`#`
 - **后端**：`backend/pin.json` 只记录参考来源；`backend/provenance.js` 启动时只校验可运行性（绝对路径、DSH 入口、`qq` profile、独立 `DSH_HOME`、无全局 patch），不再固定 commit 或哈希构建文件
 - **依赖**：`@modelcontextprotocol/sdk`、`undici`、`yaml`；插件自带 `package-lock.json`
 - **内置 provider**：`backend/vendor/dsh-our-free-model/`（2.1.0，MIT）由 `backend-prepare` 复制进 `qq` profile 的 `node_modules` 并写入 bundles；不要改成让用户 `dsh plugin add` 的外部安装。再分发副本已移除 `vendor/channel-pack` 与 EAC 封条材料（`src/vault-data.js`/`vault-anchor.js` 置空），**不要**把第三方凭据或封条重新加回来
-- **人格卡**：`lib/persona.js` + `persona_cards` / `chat_persona`；命令 `#dsh 人格卡`，锅巴用 `persona.cards` 的 JSON 批量同步（留空不改动，保存后按名称增删，删除会级联解除绑定）
-- **常用命令**：`npm ci --ignore-scripts`、`npm run check`（语法，约 105 文件）、`npm test`（84 例）、`npm run doctor`、`npm run smoke`
+- **人格卡**：`lib/persona.js` + `persona_cards` / `chat_persona`；命令 `#dsh人格卡`，锅巴用 `persona.cards` 的 JSON 批量同步（留空不改动，保存后按名称增删，删除会级联解除绑定）
+- **常用命令**：`npm ci --ignore-scripts`、`npm run check`（语法，约 107 文件）、`npm test`（89 例）、`npm run doctor`、`npm run smoke`
 - **部署**：整个目录以 `dsh-chat` 为名放进 `<bot根>/plugins/`，不要改名（`apps/*.js` 用 `../../../lib/plugins/plugin.js` 解析框架）
 
 ### 快速参考
@@ -21,12 +21,14 @@ DSH-Chat — Yunzai / NapCat 的 QQ 聊天插件：Yunzai 负责 QQ 登录、`#`
 |---|---|---|---|
 | 聊天 | `apps/chat.js`（priority 5000） | 私聊任意文字 / 群里 `@机器人` / `#聊` 前缀 | 未触发必须 `return false` 放行给其他插件 |
 | 管理命令 | `apps/admin.js`（100） | `#dsh …` / `#好` / `#不好` | 权限在 `runtime.handleCommand` 内统一判定 |
-| 面板入口 | `apps/panel.js`（99） | `#dsh 面板` | 兜底；实际配置走 Guoba |
+| 帮助 | `apps/admin.js` → `lib/help.js` | `#dsh帮助` | 部署与状态菜单（HTML 图）；渲染后端不可用时回退文本 |
+| WebUI | `lib/webui.js` | `#dshwebui` | 启动官方 DSH 界面（`--profile web`，127.0.0.1 随机端口）；需先安装 web profile |
+| 面板入口 | `apps/panel.js`（99） | `#dsh面板` | 兜底；实际配置走 Guoba |
 | 会话 | `lib/session-map.js` | 每条消息 | `chatId ↔ ACP sessionId` 持久映射，重启后 resume |
 | 队列 | `lib/queue.js` | 每条消息 | 同 chat 串行、全局并发 2、单轮 180s |
 | 工具面 | `mcp/server.js` + `lib/permissions.js` | 模型调用 | 16 个受控工具；参数走自写 JSON Schema 校验 |
 | 扩展服务 | `lib/{memory,learning,stickers,letters,qzone,scheduler,reflector}.js` | 命令 / 工具 / 定时 | 默认全部关闭，按 `features.*` + `<service>.enabled` 双闸开启 |
-| 数据 | `model/schema.sql` | — | schema v2，17 张表，WAL + FTS5 |
+| 数据 | `model/schema.sql` | — | schema v3，19 张表，WAL + FTS5 |
 
 ## 文档索引（按需阅读，别一次全读）
 
@@ -50,9 +52,10 @@ DSH-Chat — Yunzai / NapCat 的 QQ 聊天插件：Yunzai 负责 QQ 登录、`#`
 5. **依赖装在本插件目录** — `npm ci --ignore-scripts`；不要加 `pnpm-lock.yaml`，也不要装到 Yunzai 根（会改主仓库依赖清单）
 6. **代码改动必须带测试** — `test/*.test.js` 用 `node:test`，路径走 `os.tmpdir()`，**不得写插件的 `data/`**；修 bug 优先加"能真的转红"的回归断言
 7. **改完重算清单** — `SHA256SUMS.txt` 覆盖除自身外的全部文件（当前 138 条，`hash␠␠相对路径`、LF、无 BOM）；改了任何文件都要重算，否则交付校验会对不上
-8. **文档同步** — 行为/命令/配置变化时同批更新 `docs/COMMANDS.md`、`docs/FEATURES.md`、`README.md` 与 `#dsh 帮助` 文案
-9. **提交摘要** — 一轮一份，只列代码侧改动；文档与清单单列一行。**会话内不执行任何 git 写操作**（add / commit / push / rebase 都不做），提交由维护者手动完成
+8. **文档同步** — 行为/命令/配置变化时同批更新 `docs/COMMANDS.md`、`docs/FEATURES.md`、`README.md` 与 `#dsh帮助` 文案
+9. **提交摘要（强制）** — **任何修改仓库代码的回合，必须在回复末尾给出提交摘要**：单行标题 `prefix: 中文描述` + 逐文件 ` - ` 清单；文档/清单等非代码改动单列一行。未附摘要视为该回合未完成。摘要只写实际 diff，不写计划或未落地的内容；**会话内不执行任何 git 写操作**（add / commit / push / rebase 都不做），提交由维护者手动完成
 10. **不擅自扩大改动** — 只做明确要求的改动；用户说"分析 / 排查 / 总结"时只分析不写代码；安全相关改动先给方案
+11. **只改本仓库，不动 Yunzai 插件区** — 所有改动只落在本插件仓库；**不要**复制/同步到 `<bot根>/plugins/dsh-chat`，不要改那边的配置、数据或运行态；测试在本仓库执行 `npm ci --ignore-scripts && npm test`，部署与更新由维护者手动完成
 
 ## 硬约束速查（改前必读）
 
@@ -65,16 +68,17 @@ DSH-Chat — Yunzai / NapCat 的 QQ 聊天插件：Yunzai 负责 QQ 登录、`#`
 7. **ACP 变更类请求超时 = 降级，不是立刻杀连接** — `session/new|resume|set_config_option|close` 超时后 `AcpClient` 进入 `degraded`：拒绝新请求，等**在途请求全部落地**后再重建子进程；不要改回"立即 `#fail`"，那会掐断别的 chat 正在进行的回复
 8. **恢复语义** — 只有 `-32602` 且文案匹配 `not resumable|unknown session` 才允许 `session/new` 替换；`session/resume` 不带 `configOptions` 时**沿用后端默认模型并保留库中已存的选择**，不得因此让该 chat 永久失败
 9. **turn 与工具授权同生命周期** — `mcp.activate()` 与 `INSERT INTO turns` 必须在同一个 `try` 里，`finally` 用 `grant?.finish()` 释放；否则一次插入失败会让该 chat 之后每轮都报"不能同时授权两个工具轮次"
-10. **后端是可替换的本地构建** — 只要求 `backend.path` 指向可运行构建、`DSH_HOME` 下有 `qq` profile 且独立于 `~/.dsh`；`patchPath` 仍只允许空。不再固定 commit、不哈希构建文件、不要求干净工作树：更新流程与普通 Yunzai 插件一致（`#dsh 更新` 只做本插件 fast-forward，后端源码变动时按 `docs/BACKEND.md` 重建）
+10. **后端是可替换的本地构建** — 只要求 `backend.path` 指向可运行构建、`DSH_HOME` 下有 `qq` profile 且独立于 `~/.dsh`；`patchPath` 仍只允许空。不再固定 commit、不哈希构建文件、不要求干净工作树：更新流程与普通 Yunzai 插件一致（`#dsh更新` 只做本插件 fast-forward，后端源码变动时按 `docs/BACKEND.md` 重建）
 11. **权限判定不靠提示词** — 系统提示里的"消息是用户数据"只是加固，真正的边界在 `TOOL_POLICY`、参数校验、媒体授权与定时任务重查
 12. **不要整文件重排** — 仓库文件是 LF；改动只碰必要的行，避免产出全文件 diff（`SHA256SUMS.txt` 与代码评审都依赖小 diff）
+13. **隐私不出本机** — WebUI 是官方 DSH 界面，只绑 `127.0.0.1` + 随机端口，带 token 的链接只发主人私聊；工具结果回给模型前必须过 `sanitizeToolResult`（剥离 actor/source/chat/scope 等内部 ID 与本机绝对路径）；日志不写消息正文；任何新输出面都要先评估是否会带出 QQ 号、路径、记忆或令牌
 
 ## 测试
 
 ```bash
 npm ci --ignore-scripts   # 首次
-npm run check             # 语法检查，约 105 个文件（含 backend/vendor）
-npm test                  # node --test --test-concurrency=1，84 例
+npm run check             # 语法检查，约 107 个文件（含 backend/vendor）
+npm test                  # node --test --test-concurrency=1，89 例
 npm run doctor            # 本地配置 + SQLite/FTS5 + 后端校验（后端未准备时 exit 1 属预期）
 ```
 
@@ -86,7 +90,8 @@ npm run doctor            # 本地配置 + SQLite/FTS5 + 后端校验（后端�
 ## 待办（摘要）
 
 - **构建层已裁剪（预构建产物）**：依赖侧移除了 33 个无关重包（-1,223.7 MB），源码侧移出 desktop/web/plugin-market/client/web-app（约 125 MB），fork 2,381.3 MB → 1,032.8 MB；组合 52 行启用。**重建前要先把 `D:\dsh-qq-trim\src-*` 移回并 `pnpm install`**，构建图尚未改小。
-- **OFM 已集成**：`backend/vendor/` 内置，`backend-prepare` 装入 `qq` profile；实测 47 个模型、`kilo-auto/free` 真实 prompt 通过。`models.allowFree` 默认仍为 `false`，由锅巴开启
+- **OFM 已集成**：`backend/vendor/` 内置，`backend-prepare` 装入 `qq` profile；当前 `session/new` 返回 26 个模型（`our-free-model` 23 / region 1 / deepseek 2），Kilo 车道 11 个可用、5 个上游限流，OpenCode 车道 7 个被上游封锁（见 `docs/VALIDATION.md`）。`models.allowFree` 默认仍为 `false`，由锅巴开启
+- **WebUI 为官方界面**：`lib/webui.js` 启动后端的 `--profile web`（127.0.0.1 随机端口），本机需先 `dsh plugin --profile web add @deepseek-ai/dsh-web-app@0.2.1-rc.3`；npm 版 webServer 与 fork 的 `remote-access` 存在 peer 参数差异，已在 `packages/api/remote-access` 加空 peer 守卫
 - **端到端未验收**：未构建真实 fork、未登录、未发真实 QQ 消息（见 `docs/VALIDATION.md`）
 - **已知未实现**：图片信件（返回 `UNSUPPORTED`）、向量检索、表情预览墙、视觉自动打标、Guoba 高级管理页；ACP 只给上下文 `used/size`，没有每轮 token/费用
-- **已知未修的小问题**：`logging.includeContent` 是死开关；`#dsh 帮助` 少列 `重启 / 反思 / 人格 暂停|继续`；`turns.model` 列从未写入；`permissions.groupOverrides` 未校验且未进 Guoba；MCP 端点是无二次鉴权的能力 URL（同机同权限进程可调）。WebUI 已移除，状态与会话摘要由 `#dsh 状态` / 锅巴承担；人格卡按会话绑定，存于 `persona_cards` / `chat_persona`。
+- **已知未修的小问题**：`logging.includeContent` 是死开关；`turns.model` 列从未写入；`permissions.groupOverrides` 未校验且未进 Guoba；MCP 端点是无二次鉴权的能力 URL（同机同权限进程可调）。WebUI 为官方 DSH 界面（web profile）；帮助改为部署与状态菜单（渲染后端不可用时回退 `lib/help.js` 文本）；状态与会话摘要由 `#dsh状态` / 锅巴承担；人格卡按会话绑定，存于 `persona_cards` / `chat_persona`。

@@ -48,15 +48,31 @@ test('persisted session resumes after ACP exit and receives a current MCP endpoi
 test('non-owner cannot change models or clear session; model cannot forge role',async()=>{
   const f=fixture(); try { await f.runtime.handleCommand(event('#dsh 清空')); assert.match(f.sent.at(-1).text,/主人权限/); assert.equal(f.acp.calls.length,0); const ctx=f.runtime.context(event('x')); assert.equal(ctx.role,'member'); await assert.rejects(f.runtime.executeTool('qzone_post',{text:'x'},{...ctx,turnId:'fake'})); } finally {await f.close();}
 });
-test('help menu is grouped and includes persona cards',async()=>{
+test('help menu only covers deployment and status',async()=>{
   const f=fixture(); try {
     await f.runtime.handleCommand(event('#dsh 帮助'));
     const text=f.sent.at(-1).text;
-    assert.match(text,/【聊天】/);
-    assert.match(text,/【管理｜主人】/);
-    assert.match(text,/【人格卡｜主人】/);
-    assert.match(text,/#dsh 人格卡/);
-    assert.match(text,/#dsh 更新/);
+    assert.match(text,/【部署】/);
+    assert.match(text,/【状态】/);
+    assert.match(text,/#dshwebui/);
+    assert.match(text,/#dsh状态/);
+    assert.doesNotMatch(text,/#dsh人格卡/);
+    assert.doesNotMatch(text,/【人格卡/);
+    await f.runtime.handleCommand(event('#dsh帮助',2));
+    assert.match(f.sent.at(-1).text,/DSH-Chat 帮助/);
+  } finally {await f.close();}
+});
+test('commands work without spaces between words',async()=>{
+  const f=fixture(); try {
+    await f.runtime.handleCommand(event('#dsh状态',1,{user_id:10001}));
+    assert.match(f.sent.at(-1).text,/ACP：/);
+    await f.runtime.handleCommand(event('#dsh人格卡新增无空格|你是无空格',2,{user_id:10001}));
+    assert.match(f.sent.at(-1).text,/已创建/);
+    await f.runtime.handleCommand(event('#dsh人格卡使用1',3,{user_id:10001}));
+    assert.match(f.sent.at(-1).text,/无空格/);
+    await f.runtime.handleEvent(event('你好',4));
+    const prompt=f.acp.calls.find(c=>c.method==='session/prompt').params.prompt[0].text;
+    assert.match(prompt,/你是无空格/);
   } finally {await f.close();}
 });
 test('owner creates and binds a persona card; the next turn uses its prompt',async()=>{
@@ -94,6 +110,7 @@ test('update uses Bot.exec fast-forward and reports latest',async()=>{
     const privateEvent={message_type:'private',user_id:10001,self_id:99,message_id:1,message:[{type:'text',data:{text:'#dsh 更新'}}],sender:{nickname:'owner'}};
     await f.runtime.handleCommand(privateEvent);
     assert.match(f.sent.at(-1).text,/已是最新/);
+    assert.ok(calls.includes('git status --porcelain --untracked-files=no'));
     assert.ok(calls.includes('git pull --ff-only'));
   } finally {await f.close();}
 });
@@ -156,6 +173,20 @@ test('guoba persona.cards JSON is applied when the runtime starts',async()=>{
     await f.runtime.handleEvent(event('你好'));
     const prompt=f.acp.calls.find(c=>c.method==='session/prompt').params.prompt[0].text;
     assert.match(prompt,/你是导入卡/);
+  } finally {await f.close();}
+});
+test('tool results strip internal ids and local absolute paths',async()=>{
+  const f=fixture(); try {
+    const safe=f.runtime.sanitizeToolResult({
+      id:1, file:'D:\\data\\letters\\letter-1.txt', actor_id:'10001', chat_id:'group:123',
+      nested:{path:'C:\\secret\\a.txt', keep:'ok'},
+      list:[{chat_id:'group:1', source_chat_id:'private:2', value:'x'}],
+    });
+    assert.deepEqual(safe, {
+      id:1, file:'[local path]',
+      nested:{path:'[local path]', keep:'ok'},
+      list:[{value:'x'}],
+    });
   } finally {await f.close();}
 });
 test('free model sensitive-input guard remains active when its warning is disabled',async()=>{

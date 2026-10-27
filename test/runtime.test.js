@@ -22,11 +22,11 @@ class FakeAcp extends EventEmitter {
     return {};
   }
 }
-function fixture(extra={}) {
+function fixture(extra={},runtimeOptions={}) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-runtime-'));
   const config=mergeConfig(loadConfig(),{scheduler:{enabled:false},permissions:{groupWhitelist:['123'],masters:['10001']},...extra});
   const sent=[]; const adapter={fromEvent:e=>normalizeEvent(e,config),sendText:async(chatId,text)=>{sent.push({chatId,text}); return {message_id:sent.length};},capabilities:()=>({qzone:{post:false,comment:false,like:false}})};
-  const acp=new FakeAcp(); const runtime=new Runtime({root,config,adapter,acp});
+  const acp=new FakeAcp(); const runtime=new Runtime({root,config,adapter,acp,...runtimeOptions});
   return {root,config,sent,acp,runtime,async close(){await runtime.stop(); fs.rmSync(root,{recursive:true,force:true});}};
 }
 const event=(text,id=1,overrides={})=>({message_type:'group',group_id:123,user_id:55,self_id:99,message_id:id,message:[{type:'at',data:{qq:'99'}},{type:'text',data:{text}}],sender:{role:'member',nickname:'tester'},...overrides});
@@ -48,8 +48,62 @@ test('persisted session resumes after ACP exit and receives a current MCP endpoi
 test('non-owner cannot change models or clear session; model cannot forge role',async()=>{
   const f=fixture(); try { await f.runtime.handleCommand(event('#dsh 清空')); assert.match(f.sent.at(-1).text,/主人权限/); assert.equal(f.acp.calls.length,0); const ctx=f.runtime.context(event('x')); assert.equal(ctx.role,'member'); await assert.rejects(f.runtime.executeTool('qzone_post',{text:'x'},{...ctx,turnId:'fake'})); } finally {await f.close();}
 });
-test('scheduler reevaluates owner permissions and passes trusted stored context',async()=>{
-  const f=fixture({scheduler:{enabled:true,intervalMs:60000}}); try {
+test('help menu is grouped and includes webui',async()=>{
+  const f=fixture(); try {
+    await f.runtime.handleCommand(event('#dsh 帮助'));
+    const text=f.sent.at(-1).text;
+    assert.match(text,/【聊天】/);
+    assert.match(text,/【管理｜主人】/);
+    assert.match(text,/#dsh webui/);
+    assert.match(text,/#dsh 更新/);
+  } finally {await f.close();}
+});
+test('webui is owner/private only and returns a started URL',async()=>{
+  class FakeChild extends EventEmitter {
+    constructor(){
+      super();
+      this.stdout=new EventEmitter(); this.stdout.setEncoding=()=>{};
+      this.stderr=new EventEmitter(); this.stderr.setEncoding=()=>{};
+      this.exitCode=null;
+    }
+    kill(){this.exitCode=0; this.emit('exit',0);}
+  }
+  const calls=[];
+  const spawn=(cmd,args,opts)=>{calls.push({cmd,args,opts}); const child=new FakeChild(); setImmediate(()=>child.stdout.emit('data','dsh web: http://127.0.0.1:4567/?token=testtoken\n')); return child;};
+  const f=fixture({}, {spawn, verifyBackend:()=>({command:'node',args:['fake-entry.js'],cwd:process.cwd(),env:{},manifest:{}})});
+  try {
+    await f.runtime.handleCommand(event('#dsh webui'));
+    assert.match(f.sent.at(-1).text,/主人权限/);
+    const privateEvent={message_type:'private',user_id:10001,self_id:99,message_id:1,message:[{type:'text',data:{text:'#dsh webui'}}],sender:{nickname:'owner'}};
+    await f.runtime.handleCommand(privateEvent);
+    assert.match(f.sent.at(-1).text,/http:\/\/127\.0\.0\.1:4567\/\?token=testtoken/);
+    assert.equal(calls.length,1);
+    assert.deepEqual(calls[0].args.slice(1,5),['--profile','web','--host','127.0.0.1']);
+    await f.runtime.handleCommand(event('#dsh webui',2,{user_id:10001}));
+    assert.match(f.sent.at(-1).text,/私聊/);
+  } finally {await f.close();}
+});
+test('update uses Bot.exec fast-forward and reports latest',async()=>{
+  const calls=[];
+  const exec=async cmd=>{calls.push(cmd); if(cmd.includes('status')) return {stdout:''}; if(cmd.includes('rev-parse')) return {stdout:'abc123\n'}; if(cmd.includes('pull')) return {stdout:'Already up to date.\n'}; return {stdout:''};};
+  const f=fixture({}, {exec});
+  fs.mkdirSync(path.join(f.root,'.git'));
+  try {
+    const privateEvent={message_type:'private',user_id:10001,self_id:99,message_id:1,message:[{type:'text',data:{text:'#dsh 更新'}}],sender:{nickname:'owner'}};
+    await f.runtime.handleCommand(privateEvent);
+    assert.match(f.sent.at(-1).text,/已是最新/);
+    assert.ok(calls.includes('git pull --ff-only'));
+  } finally {await f.close();}
+});
+test('update refuses installs without git metadata',async()=>{
+  const f=fixture();
+  try {
+    const privateEvent={message_type:'private',user_id:10001,self_id:99,message_id:1,message:[{type:'text',data:{text:'#dsh 更新'}}],sender:{nickname:'owner'}};
+    await f.runtime.handleCommand(privateEvent);
+    assert.match(f.sent.at(-1).text,/不是 Git 仓库/);
+  } finally {await f.close();}
+});
+test('scheduler reevaluates owner permissions and passes trusted stored context',async()=>{  const f=fixture({scheduler:{enabled:true,intervalMs:60000}}); try {
     const ctx={chatId:'group:123',senderId:'10001',role:'master'};
     f.runtime.scheduler.schedule({kind:'text_send',runAt:Date.now(),payload:{text:'定时消息'}},ctx); await f.runtime.scheduler.tick(); assert.equal(f.sent.at(-1).text,'定时消息');
     f.runtime.scheduler.schedule({kind:'text_send',runAt:Date.now(),payload:{text:'不应发送'}},ctx); f.config.permissions.masters=[]; await f.runtime.scheduler.tick(); assert.ok(!f.sent.some(s=>s.text==='不应发送'));

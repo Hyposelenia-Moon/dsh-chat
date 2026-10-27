@@ -8,7 +8,7 @@ Yunzai / NapCat 的 QQ 聊天插件，通过 ACP stdio 托管固定 DSH fork，�
 
 - Node.js **24.13.0 或更高的 24.x**，使用内置 SQLite，无须编译 better-sqlite3。
 - Yunzai V3 兼容插件环境及可用的 QQ 网关；锅巴配置需要 Guoba-Plugin。
-- 固定 fork `Hyposelenia-Moon/deepseek-harness`，commit `22ddee3792402c3e70ec5f86a63c3e3e895a2f60`。该 commit 声明版本 `0.2.1-rc.3`，fork 当前没有对应 tag。
+- 参考 fork `Hyposelenia-Moon/deepseek-harness`，commit `22ddee3792402c3e70ec5f86a63c3e3e895a2f60`（版本 `0.2.1-rc.3`，无对应 tag）。后端可以基于它自行精简，插件不要求 commit 一致。
 - 后端构建依照 fork 使用 pnpm `11.28.5`；插件依赖用 npm lockfile 安装。
 
 ## 安装
@@ -24,7 +24,7 @@ Yunzai / NapCat 的 QQ 聊天插件，通过 ACP stdio 托管固定 DSH fork，�
 
    Windows 也可运行 `安装依赖.cmd`。这一步安装插件依赖，不会启动 DSH 或 QQ。
 
-3. 按 `docs/BACKEND.md` 构建固定 fork，并运行 `scripts/backend-prepare.mjs` 生成独立 `qq` profile、启动器和完整性清单。
+3. 按 `docs/BACKEND.md` 构建后端（可基于固定 fork，也可自行精简），并运行 `scripts/backend-prepare.mjs` 生成独立 `qq` profile 与启动器。
 4. 在锅巴中配置 DSH-Chat，或复制 `config/default_config.yaml` 为 `config/config.yaml` 后编辑。最少填写：
 
    ```yaml
@@ -40,7 +40,7 @@ Yunzai / NapCat 的 QQ 聊天插件，通过 ACP stdio 托管固定 DSH fork，�
      allowAllGroups: false
    ```
 
-   示例中的 QQ 号请改为数字字符串。`DSH_HOME` 必须独立；默认 `~/.dsh`、额外全局 patch 和未经校验的 `patchPath` 都会被拒绝。
+   示例中的 QQ 号请改为数字字符串。`DSH_HOME` 必须独立；默认 `~/.dsh`、额外全局 patch 和 `patchPath` 都会被拒绝。`expectedCommit` 只作提示：与后端构建记录的 commit 不一致时 `doctor` 会提示，不阻断启动。
 
 5. 在插件目录运行 `npm run doctor` 检查本地配置和构建。完成后端独立账号授权后重启 Yunzai，私聊机器人或在白名单群内 `@机器人 你好`，也可用 `#聊 你好`。
 
@@ -52,9 +52,10 @@ Yunzai / NapCat 的 QQ 聊天插件，通过 ACP stdio 托管固定 DSH fork，�
 | --- | --- |
 | 消息路由 | 私聊、@、前缀、引用回复、去重；保留其他 Yunzai `#` 命令 |
 | 队列与会话 | 同 chat 串行、全局并发限制、取消、超时 drain、SQLite 映射与恢复 |
-| WebUI | 主人私聊 `#dsh webui` 启动独立 DSH WebUI，查看 QQ 后端会话；只监听 `127.0.0.1` |
-| 更新 | 主人私聊 `#dsh 更新`，对 Git 安装做 fast-forward；不更新 DSH 后端 |
+| 人格卡 | 多套系统提示词并存，按会话绑定；主人用 `#dsh 人格卡` 管理，锅巴可按 JSON 批量同步，数据在插件内 |
+| 更新 | 主人私聊 `#dsh 更新`，对 Git 安装做 fast-forward；与普通 Yunzai 插件一致 |
 | 模型 | 读取真实 ACP 选项、主人切换、按群默认、推理强度；免费模型默认关闭 |
+| 免费模型 | 内置 `dsh-our-free-model` provider（Kilo 免密钥池），随后端准备一起安装；在锅巴打开「允许免费模型」后可用 |
 | MCP | 16 个工具，宿主绑定真实 chat/发送者/角色，工具级权限、开关、频率校验 |
 | QQ | 文本、图片、表情、@、引用、受控文件、TTS/音频；按适配器能力发送 |
 | 记忆 | 中文检索、本人/本群/全局范围、来源聊天隔离、遗忘与恢复、敏感串过滤、日限额 |

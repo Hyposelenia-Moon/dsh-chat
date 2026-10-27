@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { AcpClient, redactStderr } from '../lib/acp-client.js';
-import { inside, PIN, validateHome, verifyBackend } from '../backend/provenance.js';
+import { inside, validateHome, verifyBackend } from '../backend/provenance.js';
 import { homedir } from 'node:os';
 
 const fixture = `
@@ -116,11 +116,23 @@ test('stderr credentials are redacted across partial chunks', async t => {
   assert.doesNotMatch(redactStderr('https://alice:password@example.test/path api_key=secret'),/alice|password@|=secret/);
 });
 
-test('provenance rejects accidental upstream/default-home and traversal', () => {
-  assert.throws(()=>verifyBackend({path:'dsh',expectedCommit:PIN.commit}),/绝对路径/);
-  assert.throws(()=>verifyBackend({path:join(tmpdir(),'dsh.cmd'),expectedCommit:'master'}),/expectedCommit/);
-  assert.throws(()=>inside(tmpdir(),'../outside'),/越界/);
-  assert.throws(()=>validateHome(join(homedir(),'.dsh')),/独立/);
+test('provenance accepts any local build with a qq profile and no longer pins a commit', t => {
+  const root = mkdtempSync(join(tmpdir(), 'dsh backend '));
+  const home = mkdtempSync(join(tmpdir(), 'dsh home '));
+  t.after(() => { rmSync(root, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); });
+  mkdirSync(join(root, 'apps', 'cli', 'lib'), { recursive: true });
+  writeFileSync(join(root, 'apps', 'cli', 'lib', 'bin.js'), '');
+  writeFileSync(join(root, 'dsh.cmd'), '');
+  mkdirSync(join(home, 'profiles', 'qq'), { recursive: true });
+  writeFileSync(join(home, 'profiles', 'qq', 'package.json'), '{}');
+  const spec = verifyBackend({ path: join(root, 'dsh.cmd'), dshHome: home, profile: 'qq', expectedCommit: 'deadbeef' });
+  assert.equal(spec.args[0], join(root, 'apps', 'cli', 'lib', 'bin.js'));
+  assert.deepEqual(spec.warnings, []);
+  assert.throws(() => verifyBackend({ path: 'dsh', dshHome: home }), /绝对路径/);
+  assert.throws(() => verifyBackend({ path: join(root, 'missing.cmd'), dshHome: home }), /不存在/);
+  assert.throws(() => verifyBackend({ path: join(root, 'dsh.cmd'), dshHome: mkdtempSync(join(tmpdir(), 'empty home ')) }), /qq profile/);
+  assert.throws(() => inside(tmpdir(), '../outside'), /越界/);
+  assert.throws(() => validateHome(join(homedir(), '.dsh')), /独立/);
 });
 
 test('a global home patch added after preparation is rejected at every startup', t => {

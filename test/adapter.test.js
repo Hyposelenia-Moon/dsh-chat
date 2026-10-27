@@ -178,5 +178,13 @@ test('Guoba accepts known flat or nested fields and rejects prototype paths', ()
   const guoba = supportGuoba();
   assert.equal(guoba.pluginInfo.isV3, true);
   assert.ok(guoba.configInfo.schemas.some(field => field.field === 'backend.expectedCommit'));
+  assert.ok(guoba.configInfo.schemas.some(field => field.field === 'persona.cards'));
+  assert.ok(guoba.configInfo.schemas.some(field => field.field === 'status.backend'));
+  assert.deepEqual(guobaPatch({ status: { backend: 'x' } }), {});
+  const data = guoba.configInfo.getConfigData();
+  assert.equal(typeof data.status.backend, 'string');
+  assert.match(data.status.backend, /未配置|@/);
+  assert.match(data.status.free, /已允许|已关闭/);
+  assert.match(data.status.sessions, /^\d+$/);
   assert.equal(guoba.configInfo.schemas.some(field => field.field === 'permissions.allowOwnerLocalTools'), false);
 });

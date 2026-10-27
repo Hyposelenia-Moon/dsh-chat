@@ -91,3 +91,20 @@
   disabled: true
 - id: tool-web
   disabled: true
+# Client-only or automation surfaces the QQ bridge never uses: without a web or
+# desktop surface these rows have no consumer, and disabling them keeps the
+# agent's reachable service graph to prompt + tools + session.
+- id: jobs
+  disabled: true
+- id: session-title
+  disabled: true
+- id: user-questions
+  disabled: true
+- id: remote-access
+  disabled: true
+- id: typert-gateway
+  disabled: true
+- id: plugin-package-inventory-deepseek
+  disabled: true
+- id: session-query-sqlite
+  disabled: true

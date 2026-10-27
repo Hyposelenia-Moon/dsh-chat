@@ -6,6 +6,10 @@ const divider = label => ({ label, component: 'Divider' });
 
 /** Standard Guoba components only; status and record operations use #dsh commands. */
 export const schemas = [
+  divider('运行状态（只读）'),
+  { field: 'status.backend', label: '后端构建', component: 'Input', componentProps: { disabled: true }, helpMessage: '来自 backend.path 所在目录的 dsh-chat-backend.json；仅供确认当前跑的是哪次构建。' },
+  { field: 'status.sessions', label: '已有会话', component: 'Input', componentProps: { disabled: true } },
+  { field: 'status.free', label: '免费模型', component: 'Input', componentProps: { disabled: true } },
   divider('连接与运行时'),
   toggle('enabled', '启用 DSH-Chat', '关闭后停止处理聊天和模型工具。'),
   input('backend.path', 'DSH 可执行文件', '固定 fork 构建的绝对路径，不填写 npx/pnpm dlx 命令。'),
@@ -36,6 +40,8 @@ export const schemas = [
   input('models.reasoningEffort', '默认推理强度', '使用 ACP 当前模型实际支持的选项；留空使用后端默认。'),
   divider('人格、记忆与学习'),
   { field: 'persona.text', label: '人格文本', component: 'InputTextArea', componentProps: { rows: 8, maxLength: 16000 }, helpMessage: '修改会影响后续会话；人格候选也可用命令审批和回滚。' },
+  { field: 'persona.cards', label: '人格卡（批量 JSON）', component: 'InputTextArea', componentProps: { rows: 10, maxLength: 200000 },
+    helpMessage: '形如 [{"name":"助手A","prompt":"你是A"}]。留空表示不改动；保存后按名称同步，未列出的卡会删除并解除会话绑定。单卡切换仍用 #dsh 人格卡。' },
   toggle('features.memory', '开放记忆工具'),
   toggle('memory.enabled', '启用记忆检索'),
   toggle('memory.autoExtract', '模型自动提取记忆', '默认关闭。聊天完成后额外调用模型提取记忆，消耗账号额度；敏感内容跳过，并受每日条数限制。'),

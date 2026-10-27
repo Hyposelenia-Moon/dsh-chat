@@ -11,7 +11,7 @@ export class Store {
     this.database = new DatabaseSync(this.path);
     this.database.exec('PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;');
     const version = this.database.prepare('PRAGMA user_version').get().user_version;
-    if (version > 2) { this.database.close(); throw new Error(`Database schema ${version} is newer than supported version 2`); }
+    if (version > 3) { this.database.close(); throw new Error(`Database schema ${version} is newer than supported version 3`); }
     this.database.exec('BEGIN IMMEDIATE');
     try {
       this.database.exec(readFileSync(new URL('./schema.sql', import.meta.url), 'utf8'));

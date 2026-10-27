@@ -33,6 +33,7 @@ test('config rejects prototype pollution and unsafe local-tool mode',() => {
   assert.throws(() => mergeConfig({},JSON.parse('{"__proto__":{"polluted":true}}')));
   assert.equal({}.polluted,undefined);
   assert.throws(() => validateConfig(mergeConfig(loadConfig(),{permissions:{allowOwnerLocalTools:true}})));
+  assert.throws(() => validateConfig(mergeConfig(loadConfig(),{persona:{cards:'not json'}})));
 });
 test('media paths cannot escape the controlled root and local networks are rejected',() => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(),'dsh-media-')); const media = path.join(root,'media'); fs.mkdirSync(media); fs.writeFileSync(path.join(root,'secret'),'private');

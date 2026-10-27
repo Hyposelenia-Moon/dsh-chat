@@ -64,9 +64,9 @@ backend:
   patchPath: ''
 ```
 
-启动验证 origin、commit、package version、tracked 工作树状态、构建产物 SHA-256、profile SHA-256 与 DSH_HOME。默认 `~/.dsh`（包括指向它的目录链接）、独立 home 的全局 patch、额外 `patchPath` 会被拒绝，避免更高优先级 patch 重新启用工具。准备脚本拒绝覆盖非空 QQ profile；修改组合时，应先保留原目录备份并使用新的独立 home。其完整性检查用于避免版本漂移和误用构建，不是抵御能同时改写本地源码、清单及 Git 仓库的管理员。
+启动只校验「这台机器上的后端能不能跑」：`backend.path` 是绝对路径且存在、构建目录里有 `apps/cli/lib/bin.js`、`DSH_HOME` 下有 `qq` profile、`DSH_HOME` 独立且没有全局 `cordis.patch.yml`、`patchPath` 为空。**不再固定 commit、不再要求干净工作树、不再逐个哈希构建文件与 profile**：`expectedCommit` 与构建清单里的 commit 不一致时只在 `doctor` 里提示，不阻断启动。这样插件可以像普通 Yunzai 插件一样 `git pull` 更新，后端源码变动时按本文重建即可。准备脚本仍拒绝覆盖非空 QQ profile；修改组合时应备份或使用新的独立 home。该检查只防误配置，不是对抗能改写本地源码与清单的管理员。
 
-Windows 启动不通过 `cmd.exe`：插件读取受校验清单后调用 `node <fork>/apps/cli/lib/bin.js --profile qq`，因此支持路径中的空格，也不会将路径或参数插入 shell 字符串。
+Windows 启动不通过 `cmd.exe`：插件读取构建清单的 `entry` 后调用 `node <fork>/apps/cli/lib/bin.js --profile qq`，因此支持路径中的空格，也不会将路径或参数插入 shell 字符串。
 
 ## 账号与模型
 
@@ -88,7 +88,7 @@ node 'D:\dsh-qq\apps\cli\lib\bin.js' --profile web --host 127.0.0.1 --port 0 --n
 
 依据：[CLI](https://github.com/Hyposelenia-Moon/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/apps/cli/README.md)、[Web 参数](https://github.com/Hyposelenia-Moon/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/packages/bundle/web-app/src/startup.ts)、[账号菜单](https://github.com/Hyposelenia-Moon/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/packages/client/ui-settings-account/src/client/AccountMenu.tsx)、[账号与回调限制](https://github.com/Hyposelenia-Moon/deepseek-harness/blob/22ddee3792402c3e70ec5f86a63c3e3e895a2f60/packages/credentials/deepseek-account-platform/README.md)。
 
-`dsh-our-free-model` 2.1.0 不在此 fork 的仓库组成中，本包没有额外下载它。OFM provider 注册、settings 文件、免费模型清单、Kilo 可用性与方案中的 2026-10-24 探测结论均未在本环境验证；默认 `allowFree: false`、没有自动安装 OFM。只有管理员另行审阅并挂载固定来源后，且 ACP 真正返回相应选项时，插件才可切换。不要手工伪造模型列表。
+`dsh-our-free-model` 2.1.0（MIT）已内置在本包 `backend/vendor/dsh-our-free-model/`：`backend-prepare` 会把它复制到 `qq` profile 的 `node_modules`，并把 `dsh-our-free-model` 加进该 profile 的 `dsh.profile.bundles`。因此 ACP 会话直接能看到 `our-free-model` 与 `our-free-model-region` 的模型，**不需要再单独 `dsh plugin add`**，也不依赖 web/desktop 前端。2026-10-27 在本机实测：mounted 后 `session/new` 返回 47 个模型，其中 `our-free-model` 23 个；`our-free-model/kilo-auto/free` 真实 prompt 可用（6.9s，单条回复）。`our-free-model-region` 与部分 `buddy`/OpenCode 条目仍受上游地区或额度限制，以 ACP 实际返回为准，不要手工伪造模型列表。免费池会记录提示词，`models.allowFree` 默认仍为 `false`，需要时在锅巴打开。
 
 ## 检查与验收
 
@@ -98,7 +98,7 @@ npm test
 node scripts/backend-smoke.mjs --config backend-config.json --cwd D:\Yunzai\plugins\dsh-chat\data\workspace
 ```
 
-smoke 只执行 initialize → new → close → resume → close，显示后端真实模型列表，不消耗推理额度；真实 prompt、QQ 发送、MCP 调用、订阅登录与 OFM 仍需有对应账号环境的部署者验收。`session/list` 返回可恢复、未激活的会话，不等同于当前进程全部 active sessions。
+smoke 只执行 initialize → new → close → resume → close，显示后端真实模型列表，不消耗推理额度；真实 prompt、QQ 发送、MCP 调用与订阅登录仍需有对应账号环境的部署者验收。`session/list` 返回可恢复、未激活的会话，不等同于当前进程全部 active sessions。
 
 已自动测试：真实 Node 模拟 ACP 子进程并发、多 session update、权限拒绝/超时、超时与 AbortSignal、进程退出、无效 stdout、分块 stderr 脱敏、路径空格；SQLite 会话恢复、MCP endpoint 更新、配置失败保持旧模型、免费模型开关。
 

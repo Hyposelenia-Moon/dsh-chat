@@ -91,4 +91,14 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, completed_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS jobs_due ON jobs(status,run_at,lease_until);
-PRAGMA user_version = 2;
+CREATE TABLE IF NOT EXISTS persona_cards (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+  prompt TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1,
+  actor_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chat_persona (
+  chat_id TEXT PRIMARY KEY,
+  card_id INTEGER NOT NULL REFERENCES persona_cards(id) ON DELETE CASCADE,
+  actor_id TEXT, updated_at INTEGER NOT NULL
+);
+PRAGMA user_version = 3;

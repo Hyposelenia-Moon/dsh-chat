@@ -33,8 +33,9 @@ test('SQLite persists sessions, audit, and unique gateway messages', async t => 
   db.exec('ALTER TABLE jobs DROP COLUMN self_id; PRAGMA user_version=1;');
   const upgraded = new Store({ path: db.path });
   try {
-    assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 2);
+    assert.equal(upgraded.prepare('PRAGMA user_version').get().user_version, 3);
     assert.ok(upgraded.prepare('PRAGMA table_info(jobs)').all().some(column => column.name === 'self_id'));
+    assert.ok(upgraded.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='persona_cards'").get());
     assert.equal(upgraded.prepare('SELECT session_id FROM sessions').get().session_id, 'acp-1');
   } finally { upgraded.close(); }
 });

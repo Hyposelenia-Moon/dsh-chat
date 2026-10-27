@@ -48,39 +48,41 @@ test('persisted session resumes after ACP exit and receives a current MCP endpoi
 test('non-owner cannot change models or clear session; model cannot forge role',async()=>{
   const f=fixture(); try { await f.runtime.handleCommand(event('#dsh 清空')); assert.match(f.sent.at(-1).text,/主人权限/); assert.equal(f.acp.calls.length,0); const ctx=f.runtime.context(event('x')); assert.equal(ctx.role,'member'); await assert.rejects(f.runtime.executeTool('qzone_post',{text:'x'},{...ctx,turnId:'fake'})); } finally {await f.close();}
 });
-test('help menu is grouped and includes webui',async()=>{
+test('help menu is grouped and includes persona cards',async()=>{
   const f=fixture(); try {
     await f.runtime.handleCommand(event('#dsh 帮助'));
     const text=f.sent.at(-1).text;
     assert.match(text,/【聊天】/);
     assert.match(text,/【管理｜主人】/);
-    assert.match(text,/#dsh webui/);
+    assert.match(text,/【人格卡｜主人】/);
+    assert.match(text,/#dsh 人格卡/);
     assert.match(text,/#dsh 更新/);
   } finally {await f.close();}
 });
-test('webui is owner/private only and returns a started URL',async()=>{
-  class FakeChild extends EventEmitter {
-    constructor(){
-      super();
-      this.stdout=new EventEmitter(); this.stdout.setEncoding=()=>{};
-      this.stderr=new EventEmitter(); this.stderr.setEncoding=()=>{};
-      this.exitCode=null;
-    }
-    kill(){this.exitCode=0; this.emit('exit',0);}
-  }
-  const calls=[];
-  const spawn=(cmd,args,opts)=>{calls.push({cmd,args,opts}); const child=new FakeChild(); setImmediate(()=>child.stdout.emit('data','dsh web: http://127.0.0.1:4567/?token=testtoken\n')); return child;};
-  const f=fixture({}, {spawn, verifyBackend:()=>({command:'node',args:['fake-entry.js'],cwd:process.cwd(),env:{},manifest:{}})});
-  try {
-    await f.runtime.handleCommand(event('#dsh webui'));
+test('owner creates and binds a persona card; the next turn uses its prompt',async()=>{
+  const f=fixture(); try {
+    await f.runtime.handleCommand(event('#dsh 人格卡 新增 助手A|你是 A，只回复一个字',1,{user_id:10001}));
+    assert.match(f.sent.at(-1).text,/已创建/);
+    await f.runtime.handleCommand(event('#dsh 人格卡 列表',2,{user_id:10001}));
+    assert.match(f.sent.at(-1).text,/助手A/);
+    await f.runtime.handleCommand(event('#dsh 人格卡 使用 1',3,{user_id:10001}));
+    assert.match(f.sent.at(-1).text,/助手A/);
+    await f.runtime.handleEvent(event('你好',4));
+    const prompt=f.acp.calls.find(c=>c.method==='session/prompt').params.prompt[0].text;
+    assert.match(prompt,/你是 A，只回复一个字/);
+    assert.match(prompt,/不要用 qq_send_\* 工具重复发送/);
+    await f.runtime.handleCommand(event('#dsh 人格卡 取消',5,{user_id:10001}));
+    await f.runtime.handleEvent(event('再来一次',6));
+    const last=f.acp.calls.filter(c=>c.method==='session/prompt').at(-1).params.prompt[0].text;
+    assert.match(last,/你是 QQ 聊天助手/);
+    assert.doesNotMatch(last,/你是 A，只回复一个字/);
+  } finally {await f.close();}
+});
+test('non-owner cannot create or bind persona cards',async()=>{
+  const f=fixture(); try {
+    await f.runtime.handleCommand(event('#dsh 人格卡 新增 越权|提示词'));
     assert.match(f.sent.at(-1).text,/主人权限/);
-    const privateEvent={message_type:'private',user_id:10001,self_id:99,message_id:1,message:[{type:'text',data:{text:'#dsh webui'}}],sender:{nickname:'owner'}};
-    await f.runtime.handleCommand(privateEvent);
-    assert.match(f.sent.at(-1).text,/http:\/\/127\.0\.0\.1:4567\/\?token=testtoken/);
-    assert.equal(calls.length,1);
-    assert.deepEqual(calls[0].args.slice(1,5),['--profile','web','--host','127.0.0.1']);
-    await f.runtime.handleCommand(event('#dsh webui',2,{user_id:10001}));
-    assert.match(f.sent.at(-1).text,/私聊/);
+    assert.equal(f.runtime.personas.list({chatId:'group:123',senderId:'55',role:'member'}).length,0);
   } finally {await f.close();}
 });
 test('update uses Bot.exec fast-forward and reports latest',async()=>{
@@ -130,6 +132,30 @@ test('a failed turn insert still releases the MCP grant for the next message',as
     assert.match(f.sent.at(-1).text,/disk full/);
     await f.runtime.handleEvent(event('第二句',2));
     assert.match(f.sent.at(-1).text,/你好，已收到/);
+  } finally {await f.close();}
+});
+test('text already delivered by the qq_send_text tool is not sent twice',async()=>{
+  const f=fixture(); try {
+    f.acp.behavior=async()=>{
+      const binding=[...f.runtime.mcp.bindings.values()].find(b=>b.active)?.active;
+      assert.ok(binding,'MCP grant should be active during the prompt');
+      await f.runtime.executeTool('qq_send_text',{text:'正常'},binding);
+      const [sid]=[...f.runtime.turns.keys()];
+      f.acp.emit('update',{sessionId:sid,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'正常'}}});
+      return {stopReason:'end_turn'};
+    };
+    await f.runtime.handleEvent(event('你好'));
+    assert.equal(f.sent.filter(s=>s.text==='正常').length,1);
+  } finally {await f.close();}
+});
+test('guoba persona.cards JSON is applied when the runtime starts',async()=>{
+  const f=fixture({persona:{cards:JSON.stringify([{name:'导入卡',prompt:'你是导入卡'}])}}); try {
+    const rows=f.runtime.personas.list({chatId:'group:123',senderId:'10001',role:'master'});
+    assert.equal(rows.length,1); assert.equal(rows[0].name,'导入卡');
+    f.runtime.personas.bind({id:rows[0].id},{chatId:'group:123',senderId:'10001',role:'master'});
+    await f.runtime.handleEvent(event('你好'));
+    const prompt=f.acp.calls.find(c=>c.method==='session/prompt').params.prompt[0].text;
+    assert.match(prompt,/你是导入卡/);
   } finally {await f.close();}
 });
 test('free model sensitive-input guard remains active when its warning is disabled',async()=>{

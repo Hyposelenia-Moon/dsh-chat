@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -14,16 +14,22 @@ export function inside(root, name) {
 export function git(root, args) {
   return execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
+
+/**
+ * Describe the local build. A trimmed checkout is expected, so this records what
+ * is actually there instead of demanding a pinned upstream commit or a clean tree.
+ * The result only feeds the build manifest; it never blocks startup.
+ */
 export function verifySource(root) {
-  const commit = git(root, ['rev-parse', 'HEAD']);
-  if (commit !== PIN.commit) throw new Error(`fork commit 必须固定为 ${PIN.commit}`);
-  const origin = git(root, ['remote', 'get-url', 'origin']).replace(/\.git$/, '').replace(/\/$/, '');
-  if (origin !== PIN.repository && origin !== 'git@github.com:Hyposelenia-Moon/deepseek-harness')
-    throw new Error('origin 不是指定的 Hyposelenia-Moon fork');
-  if (JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version !== PIN.version)
-    throw new Error('fork package version 不一致');
-  if (git(root, ['status', '--porcelain', '--untracked-files=no'])) throw new Error('fork 有未提交的 tracked 修改');
-  return commit;
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  let commit = 'local';
+  try { commit = git(root, ['rev-parse', 'HEAD']); } catch { /* not a git checkout */ }
+  let repository = PIN.repository;
+  try {
+    const origin = git(root, ['remote', 'get-url', 'origin']).replace(/\.git$/, '').replace(/\/$/, '');
+    if (origin) repository = origin;
+  } catch { /* no origin */ }
+  return { commit, version: pkg.version, repository };
 }
 
 export function validateHome(homePath) {
@@ -36,33 +42,32 @@ export function validateHome(homePath) {
   return dshHome;
 }
 
-/** Verify the explicit local build. This code never fetches or installs anything. */
+/**
+ * Verify an explicit local build. Never fetches, installs, or compares file sets:
+ * update flow is "git pull the plugin, rebuild the backend when its source moves",
+ * the same as any other Yunzai plugin. Only "this is a runnable QQ backend" is checked.
+ */
 export function verifyBackend(input) {
   const config = input.backend ?? input;
-  if (!config.path || !isAbsolute(config.path)) throw new Error('backend.path 必须是 fork 构建启动器的绝对路径');
-  if (config.expectedCommit !== PIN.commit) throw new Error(`backend.expectedCommit 请设置为 ${PIN.commit}`);
-  if ((config.profile ?? 'qq') !== 'qq') throw new Error('此版本只支持经过校验的 qq profile');
+  if (!config.path || !isAbsolute(config.path)) throw new Error('backend.path 必须是 DSH 启动器的绝对路径');
+  if ((config.profile ?? 'qq') !== 'qq') throw new Error('此版本只支持 qq profile');
   const dshHome = validateHome(config.dshHome);
-  const executable = realpathSync(config.path);
+  let executable;
+  try { executable = realpathSync(config.path); } catch { throw new Error(`backend.path 不存在：${config.path}`); }
   const root = dirname(executable);
-  const manifest = JSON.parse(readFileSync(join(root, 'dsh-chat-backend.json'), 'utf8'));
-  if (manifest.repository !== PIN.repository || manifest.commit !== PIN.commit || manifest.version !== PIN.version)
-    throw new Error('当前指向的不是固定 fork 构建');
-  if (resolve(manifest.dshHome).toLowerCase() !== dshHome.toLowerCase()) throw new Error('DSH_HOME 与已准备的 qq profile 不一致');
-  verifySource(root);
-  if (relative(root, executable) !== manifest.launcher) throw new Error('启动器与构建清单不一致');
-  if (!manifest.files || Object.keys(manifest.files).length < 2) throw new Error('fork 构建文件清单缺失');
-  for (const [name, hash] of Object.entries(manifest.files)) {
-    const file = inside(root, name);
-    if (!statSync(file).isFile() || sha256(file) !== hash) throw new Error(`fork 构建文件校验失败：${name}`);
+  const manifestPath = join(root, 'dsh-chat-backend.json');
+  const manifest = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')) : null;
+  const entry = inside(root, manifest?.entry ?? 'apps/cli/lib/bin.js');
+  if (!existsSync(entry)) throw new Error('未找到 DSH 入口 apps/cli/lib/bin.js，请先构建后端');
+  if (!existsSync(join(dshHome, 'profiles', 'qq', 'package.json')))
+    throw new Error('DSH_HOME 缺少 qq profile，请先运行 backend-prepare');
+  const warnings = [];
+  if (config.expectedCommit && manifest?.commit && manifest.commit !== config.expectedCommit) {
+    warnings.push(`后端构建 commit 为 ${manifest.commit}，与 expectedCommit ${config.expectedCommit} 不同（不阻断）`);
   }
-  const profileDir = join(dshHome, 'profiles', 'qq');
-  for (const [name, hash] of Object.entries(manifest.profileFiles ?? {})) {
-    if (sha256(inside(profileDir, name)) !== hash) throw new Error(`qq profile 校验失败：${name}`);
+  if (manifest?.dshHome && resolve(manifest.dshHome).toLowerCase() !== dshHome.toLowerCase()) {
+    warnings.push('后端构建清单记录的 DSH_HOME 与当前配置不同（不阻断）');
   }
-  if (!manifest.profileFiles?.['cordis.patch.yml']) throw new Error('qq profile 缺少组合校验');
-  // Invoke JavaScript directly: .cmd wrappers are never interpreted by cmd.exe.
-  const entry = inside(root, manifest.entry);
   return { command: process.execPath, args: [entry, '--profile', 'qq'], cwd: root,
-    env: { ...process.env, DSH_HOME: dshHome, DSH_TELEMETRY_DISABLED: '1' }, manifest };
+    env: { ...process.env, DSH_HOME: dshHome, DSH_TELEMETRY_DISABLED: '1' }, manifest, warnings, commit: manifest?.commit ?? null };
 }

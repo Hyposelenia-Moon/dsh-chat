@@ -89,3 +89,26 @@ test('web UI command is private-only and can stop the launcher', async t => {
   assert.match(sent.at(-1).text, /已关闭/);
   assert.equal(runtime.webui, null);
 });
+
+
+test('concurrent launcher starts share one promise and stop rejects an in-flight launch',async t=>{
+  const {runtime}=fixture(t);const children=[];
+  const ui=new OfficialWebUi({runtime,spawn:()=>{const child=new FakeChild();children.push(child);return child;},timeoutMs:1000});
+  const a=ui.start();const b=ui.start();assert.equal(a,b);
+  await Promise.resolve();assert.equal(children.length,1);
+  const rejected=assert.rejects(a,/停止/);ui.stop();await rejected;
+  assert.equal(ui.child,null);assert.equal(ui.url,null);assert.equal(children[0].killed,true);
+  const retry=ui.start();await Promise.resolve();
+  children[1].stdout.write('http://127.0.0.1:5555/?token=retry-token');
+  assert.match(await retry,/retry-token/);ui.stop();
+});
+
+test('failed launcher clears state and never copies stderr capability tokens into errors',async t=>{
+  const {runtime}=fixture(t);const children=[];
+  const ui=new OfficialWebUi({runtime,spawn:()=>{const child=new FakeChild();children.push(child);return child;},timeoutMs:1000});
+  const pending=ui.start();await Promise.resolve();
+  children[0].stderr.write('http://127.0.0.1:5555/?tok');children[0].stderr.write('en=secret-credential');
+  const rejected=assert.rejects(pending,error=>!error.message.includes('secret-credential') && !error.message.includes('token='));
+  children[0].emit('exit',1);await rejected;assert.equal(ui.child,null);assert.equal(ui.url,null);
+  const retry=ui.start();await Promise.resolve();children[1].stdout.write('http://127.0.0.1:5555/?token=retry');await retry;ui.stop();
+});

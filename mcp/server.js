@@ -1,4 +1,6 @@
 import http from 'node:http';
+import {publicError} from '../lib/privacy.js';
+import {chatKey} from '../lib/qq-adapter.js';
 import {randomBytes} from 'node:crypto';
 import {Server} from '@modelcontextprotocol/sdk/server/index.js';
 import {StreamableHTTPServerTransport} from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -11,8 +13,8 @@ export const TOOLS = [
   tool('qq_send_text', '向当前聊天发送文本', {text: str('文本')}, ['text']),
   tool('qq_send_image', '发送公开 HTTPS 图片或插件媒体目录内图片', {path: str('受控媒体路径'), url: str('公开图片 HTTPS URL')}),
   tool('qq_send_sticker', '从本群表情库选择表情', {stickerId: id, tag: str('标签')}),
-  tool('qq_mention', '在当前群提及指定 QQ 用户', {userId: str('QQ号', {pattern:'^\\d+$'}), text: str('附加文本')}, ['userId']),
-  tool('qq_reply', '引用当前聊天中的消息回复', {messageId: str('QQ消息ID'), text: str('文本')}, ['messageId','text']),
+  tool('qq_mention', '在当前群提及指定 QQ 用户', {userId: str('本轮用户别名', {pattern:'^(?:sender|mention_[1-9][0-9]*)$'}), text: str('附加文本')}, ['userId']),
+  tool('qq_reply', '引用当前聊天中的消息回复', {messageId: str('本轮消息别名', {pattern:'^(?:current_message|quoted_message)$'}), text: str('文本')}, ['messageId','text']),
   tool('qq_send_voice', '使用 QQ TTS 或受控音频文件发语音', {text: str('TTS文本'), audio: str('受控音频路径')}),
   tool('qq_send_file', '发送插件媒体目录内文件，需要主人或群管', {path: str('文件路径')}, ['path']),
   tool('group_info', '查询当前群的群资料'),
@@ -47,8 +49,15 @@ export function validateArguments(name, args) {
 }
 export class ChatMcpServer {
   constructor({execute, logger}) { this.execute = execute; this.logger = logger; this.bindings = new Map(); this.transports = new Set(); }
-  async start() {
-    if (this.http) return;
+  start() {
+    if (this.starting) return this.starting;
+    if (this.http) return Promise.resolve();
+    const pending = this._start();
+    this.starting = pending;
+    pending.then(() => { this.starting = null; }, () => { this.starting = null; this.http = null; });
+    return pending;
+  }
+  async _start() {
     this.http = http.createServer(async (req,res) => {
       const host = req.headers.host;
       if (host !== `127.0.0.1:${this.port}` || req.headers.origin) { res.writeHead(403).end(); return; }
@@ -65,7 +74,7 @@ export class ChatMcpServer {
           validateArguments(request.params.name, args);
           const result = await this.execute(request.params.name,args,ctx);
           return {content:[{type:'text',text:JSON.stringify(result ?? {ok:true})}]};
-        } catch (e) { return {isError:true, content:[{type:'text',text:JSON.stringify({error:{code:e.code || 'TOOL_FAILED',message:e.message}})}]}; }
+        } catch (e) { return {isError:true, content:[{type:'text',text:JSON.stringify({error:publicError(e)})}]}; }
       });
       const transport = new StreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
       this.transports.add(transport);
@@ -76,7 +85,7 @@ export class ChatMcpServer {
         for await (const chunk of req) { size += chunk.length; if (size > 128000) { res.writeHead(413).end(); return; } chunks.push(chunk); }
         const body = JSON.parse(Buffer.concat(chunks).toString());
         await transport.handleRequest(req,res,body);
-      } catch (e) { this.logger?.warn('mcp_request_failed',{error:e.message}); if (!res.headersSent) res.writeHead(400).end(); }
+      } catch (e) { this.logger?.warn('mcp_request_failed',{error:publicError(e).code}); if (!res.headersSent) res.writeHead(400).end(); }
     });
     this.http.requestTimeout = 30000; this.http.headersTimeout = 10000;
     await new Promise((resolve,reject) => { this.http.once('error',reject); this.http.listen(0,'127.0.0.1',resolve); });
@@ -84,15 +93,25 @@ export class ChatMcpServer {
   }
   async forChat(ctx) {
     await this.start();
-    let entry = [...this.bindings.entries()].find(([,v]) => v.chatId === ctx.chatId);
-    if (!entry) { entry = [`/mcp/${randomBytes(32).toString('hex')}`,{chatId:ctx.chatId,active:null}]; this.bindings.set(...entry); }
+    const key = chatKey(ctx);
+    let entry = [...this.bindings.entries()].find(([,v]) => v.key === key);
+    if (entry && entry[1].turnId !== ctx.turnId) {
+      if (entry[1].active) throw new Error('同一会话不能同时授权两个工具轮次');
+      this.bindings.delete(entry[0]);
+      entry = null;
+    }
+    if (!entry) {
+      entry = [`/mcp/${randomBytes(32).toString('hex')}`, {key, turnId:ctx.turnId, active:null, finished:false}];
+      this.bindings.set(...entry);
+    }
     return {type:'http',name:'dsh-chat',url:`http://127.0.0.1:${this.port}${entry[0]}`,headers:[]};
   }
   async activate(ctx) {
+    if (!ctx.turnId) throw new Error('工具授权必须指定消息轮次');
     const spec = await this.forChat(ctx), binding = this.bindings.get(new URL(spec.url).pathname);
-    if (binding.active) throw new Error('同一会话不能同时授权两个工具轮次');
+    if (binding.active || binding.finished) throw new Error('同一会话不能同时授权两个工具轮次或复用旧轮次');
     binding.active = Object.freeze({...ctx});
-    return {finish:() => { if (binding.active?.turnId === ctx.turnId) binding.active = null; }};
+    return {finish:() => { binding.active = null; binding.finished = true; }};
   }
   async stop() {
     for (const b of this.bindings.values()) b.active = null;

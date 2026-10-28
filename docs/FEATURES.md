@@ -6,15 +6,21 @@
 
 `new Store({ path })` 和 `openDatabase(path)` 返回同步 Store。接口为 `prepare(sql)`、`exec(sql)`、`transaction(fn)`、`audit(event, ctx, detail)`、`close()`。`transaction` 使用 `BEGIN IMMEDIATE`，回调必须同步。时间均为 Unix 毫秒。
 
-建表文件为 `model/schema.sql`，包含设计的十个业务表，以及 `turns`、`audit`、`usage`、`message_dedup`、`profile_approvals`、`feature_state`、`skill_templates`、`sticker_events`。启用 WAL、外键和五秒 busy timeout；当前 schema 为 v2，会为 v1 任务表迁移 `self_id`，读取到较新 schema 会拒绝启动。数据库路径应置于插件专属 data 目录。
+建表文件为 `model/schema.sql`，包含设计的十个业务表，以及 `turns`、`audit`、`usage`、`message_dedup`、`profile_approvals`、`feature_state`、`skill_templates`、`sticker_events`。启用 WAL、外键和五秒 busy timeout；当前 schema 为 v3，兼容旧版本并保留任务的 `self_id`，读取到较新 schema 会拒绝启动。数据库路径应置于插件专属 data 目录。
 
-`messages` 对 `(chat_id, qq_message_id, role)` 建唯一索引；入口另外使用 `message_dedup` 在入队前去重。同一 chat 的 assistant 消息不带 QQ 消息 ID 时不会被误去重。`profiles` 的部分唯一索引保证最多一个激活版本。
+`messages` 对 `(chat_id, qq_message_id, role)` 建唯一索引；入口另外使用 `message_dedup` 在入队前去重。内部键为 `selfId:chatId`：会话、消息/去重、队列、媒体授权与反馈按机器人账号隔离，缺失 selfId 拒绝，旧 bare chat 会话映射不迁移。同一账号 chat 的 assistant 消息不带 QQ 消息 ID 时不会被误去重。`profiles` 的部分唯一索引保证最多一个激活版本。
 
 ## 统一调用约定
 
 各服务构造参数为 `{ db, config, logger, adapter, mediaRoot }`，方法参数为 `(args, ctx)`。可信上下文 `ctx` 包含 `chatId`、`senderId`、`role`、`turnId`，其中角色必须来自 QQ 网关和主人配置。服务提供范围检查；调用方在 MCP 执行及定时任务真正执行前再次校验当前权限、总开关、群白名单、功能开关和频率。
 
-错误抛出 `FeatureError`，`code` 包括 `FEATURE_DISABLED`、`FORBIDDEN`、`INVALID_ARGUMENT`、`NOT_FOUND`、`QUOTA_EXCEEDED`、`UNSUPPORTED`。调用方可将它们转为结构化 MCP 错误。
+错误抛出 `FeatureError`，`code` 包括 `FEATURE_DISABLED`、`FORBIDDEN`、`INVALID_ARGUMENT`、`NOT_FOUND`、`QUOTA_EXCEEDED`、`UNSUPPORTED`。调用方使用固定错误码/文案转为结构化 MCP 错误，不透传原始异常；工具结果逐工具字段白名单并继续清理字符串中的 ID、凭据与路径，不返回原始网关对象。宿主已知的本轮 QQ 用户和消息目标只暴露别名，不保证任意文本中的全部个人信息均被识别。
+
+## 模型与工具生命周期
+
+账号 provider 白名单仅 `deepseek-account`，unknown 拒绝。自动 fallback 仅账号到账号，不自动 free；显式跨账号/免费信任等级切换必须新 session，旧历史不跨等级复用。新建/resume 必须返回可确认的实际 model 选项，缺失即拒绝。免费模型受开关、分类与全组装 prompt 敏感检测约束，含人格、昵称、记忆、正文，图片/附件拒绝；规则并非绝对隐私保证。
+
+MCP 每 turn 新能力 URL，身份与 turnId 由宿主绑定；结束后旧授权失效，不可后续重激活。下一轮 close/resume 重挂新地址，失败即拒绝 prompt。真实 backend 兼容性尚未验收，本机能力地址仍需避免泄露。
 
 ## 记忆
 
@@ -36,7 +42,13 @@ SQLite 支持 FTS5 时使用 BM25；中文子串使用参数化 `LIKE` 召回，
 
 每日候选由 `learning.maxCandidatesPerDay` 限制，兼容 `dailyCandidateLimit`。`pause({ paused:true }, ctx)` 写入数据库，重建服务后仍保持暂停；审批和回滚在暂停期间可用。所有方法均不改配置文件、代码、权限或凭据。
 
+反馈只接受当前机器人账号聊天的助手消息；默认同用户同聊天 3 秒冷却，每聊天每 UTC 日新增最多 100 条，保留 90 天。同用户同助手消息更新原行，不追加；过期记录在后续反馈写入时清理。
+
 `saveTemplate({ intent, steps, successful }, ctx)` 保存主人审核的文本步骤模板；`templates({ query }, ctx)` 仅检索成功模板。步骤只保存文字，不存可执行代码和参数对象，也不会自动执行；调用具体工具时继续走正常权限校验。
+
+## 媒体缓存
+
+`MediaStore` 默认 `media.ttlHours:24`、`maxCacheBytes:134217728`（128 MiB）、`maxDownloadsPerChatPerHour:60`、`cleanupIntervalMs:300000`（5 分钟）。下载前按机器人账号聊天计入小时限额；按 TTL 与总量清理 cache 并移除授权，缓存上限不代替贴纸库上限。公开 HTTPS、公网 IP、逐跳复验和下载大小限制仍生效；手工上传目录按 `uploads/机器人QQ/group_群号` 或 `uploads/机器人QQ/private_QQ号` 授权，旧无账号目录不自动授权。
 
 ## 表情
 
@@ -45,6 +57,8 @@ SQLite 支持 FTS5 时使用 BM25；中文子串使用参数化 `LIKE` 召回，
 确认后的字节按 SHA-256 命名保存在 `mediaRoot/stickers`，对 hash 唯一去重。发送前再次核对内容 hash。收录权限按原始 chat 保存，普通用户的 `search` 和 `send` 不会访问其他群的表情。主人可管理完整库。同一图片已在其他 chat 收录时，普通用户会得到 `ALREADY_EXISTS`，不返回其路径或原始群信息。
 
 `search({ tag?, query?, limit? }, ctx)` 返回列表。`send({ stickerId?|id?|tag? }, ctx)` 调用注入的 `adapter.sendSticker` 或 `adapter.sendImage`，成功后记录用量；没有发送接口时只返回 `delivery:'prepared'`。默认适配器提供 `sendImage`。`stickers.maxPerGroupPerHour` 分别约束每个 chat 一小时内的收录和发送次数，兼容 `hourlyCollectLimit`/`hourlySendLimit`。失败发送释放本次限额预留。
+
+新贴纸库默认 `maxStoreBytes:268435456`（256 MiB）、`maxStoreFiles:2000`，按整个库计算。自动收录在下载前预留每小时收录额度和文件名额，写入前按实际字节复查总量；失败释放预留并回滚新文件，后续收录清理无数据库记录的 hash 孤儿文件。
 
 ## 写信
 

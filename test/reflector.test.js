@@ -12,9 +12,9 @@ const FREE = JSON.stringify(['our-free-model', 'kilo-auto/free']);
 const ctx = { chatId: 'private:123456', senderId: '123456', role: 'master', turnId: 'test-reflect' };
 
 class MockAcp extends EventEmitter {
-  constructor({ selected = PAID, noOptions = false, output = { memories: [] }, onPrompt } = {}) {
+  constructor({ selected = PAID, actualModel, noOptions = false, output = { memories: [] }, onPrompt } = {}) {
     super();
-    Object.assign(this, { selected, noOptions, output, onPrompt });
+    Object.assign(this, { selected, actualModel, noOptions, output, onPrompt });
     this.calls = [];
     this.count = 0;
   }
@@ -27,7 +27,7 @@ class MockAcp extends EventEmitter {
     options.signal?.throwIfAborted();
     this.calls.push({ method, params });
     if (method === 'session/new') return { sessionId: `extract-${++this.count}`, configOptions: this.options() };
-    if (method === 'session/set_config_option') return { configOptions: this.options() };
+    if (method === 'session/set_config_option') { this.selected = this.actualModel ?? params.value; return { configOptions: this.options() }; }
     if (method === 'session/prompt') {
       const encoded = typeof this.output === 'string' ? this.output : JSON.stringify(this.output);
       const middle = Math.floor(encoded.length / 2);
@@ -114,6 +114,42 @@ test('configured or currently selected free providers cannot process background 
   const selected = fixture(t, { selected: FREE, patch: { models: { default: '' } } });
   await assert.rejects(selected.reflector.extract(ctx, '喜欢猫', '收到'), /账号模型/);
   assert.equal(selected.acp.calls.some(call => call.method === 'session/prompt'), false);
+});
+
+test('backend switching to a free or unknown actual model refuses prompt and closes session', async t => {
+  for (const actualModel of [FREE, JSON.stringify(['unknown-provider', 'model'])]) {
+    const f = fixture(t, {actualModel});
+    await assert.rejects(f.reflector.extract(ctx, '喜欢猫', '收到'), /账号模型/);
+    assert.equal(f.acp.calls.some(call => call.method === 'session/set_config_option'), true);
+    assert.equal(f.acp.calls.some(call => call.method === 'session/prompt'), false);
+    assert.equal(f.acp.calls.at(-1).method, 'session/close');
+    assert.equal(f.acp.listenerCount('update'), 0);
+  }
+});
+
+test('configured unknown and currently selected unknown providers refuse background prompt', async t => {
+  const unknown = JSON.stringify(['unverified-provider', 'chat-model']);
+  const configured = fixture(t, {patch: {memory: {extractionModel: 'unverified-provider/chat-model'}}});
+  await assert.rejects(configured.reflector.extract(ctx, '喜欢猫', '收到'), /账号模型/);
+  const selected = fixture(t, {selected: unknown, patch: {models: {default: ''}}});
+  await assert.rejects(selected.reflector.extract(ctx, '喜欢猫', '收到'), /账号模型/);
+  for (const f of [configured, selected]) assert.equal(f.acp.calls.some(call => call.method === 'session/prompt'), false);
+});
+
+test('background prompts replace QQ identities and absolute paths before sending materials', async t => {
+  const trusted = {...ctx, selfId: '987654', mentions: ['246810'], messageId: '111222'};
+  const f = fixture(t);
+  await f.reflector.extract(trusted, 'QQ 123456 提到 246810，消息 111222，机器人 987654，文件 D:\\private\\note.txt', '本机 /home/alice/private.txt');
+  const prompt = f.acp.calls.find(call => call.method === 'session/prompt').params.prompt[0].text;
+  for (const value of ['123456', '246810', '111222', '987654', 'private.txt', 'note.txt', '/home/alice']) assert.equal(prompt.includes(value), false, value);
+  assert.match(prompt, /sender/); assert.match(prompt, /local path/);
+});
+
+test('reflection containing sensitive feedback refuses prompt before redaction', async t => {
+  const f = fixture(t);
+  await assert.rejects(f.reflector.reflect(ctx, [{signal: 'bad', note: 'api_key=sk-123456789012345678901234'}]), /敏感/);
+  assert.equal(f.acp.calls.some(call => call.method === 'session/prompt'), false);
+  assert.equal(f.acp.calls.at(-1).method, 'session/close');
 });
 
 test('unknown current provider is rejected before sending background data', async t => {

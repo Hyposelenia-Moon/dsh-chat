@@ -25,9 +25,9 @@ class FakeAcp extends EventEmitter {
 function fixture(extra={},runtimeOptions={}) {
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'dsh-runtime-'));
   const config=mergeConfig(loadConfig(),{scheduler:{enabled:false},permissions:{groupWhitelist:['123'],masters:['10001']},...extra});
-  const sent=[]; const adapter={fromEvent:e=>normalizeEvent(e,config),sendText:async(chatId,text)=>{sent.push({chatId,text}); return {message_id:sent.length};},capabilities:()=>({qzone:{post:false,comment:false,like:false}})};
+  const sent=[]; let latestContext; const adapter={fromEvent:e=>(latestContext=normalizeEvent(e,config)),sendText:async(chatId,text,options={})=>{sent.push({chatId,text,context:options.context??latestContext}); return {message_id:sent.length};},capabilities:()=>({qzone:{post:false,comment:false,like:false}})};
   const acp=new FakeAcp(); const runtime=new Runtime({root,config,adapter,acp,...runtimeOptions});
-  return {root,config,sent,acp,runtime,async close(){await runtime.stop(); fs.rmSync(root,{recursive:true,force:true});}};
+  return {root,config,sent,adapter,acp,runtime,async close(){await runtime.stop(); fs.rmSync(root,{recursive:true,force:true});}};
 }
 const event=(text,id=1,overrides={})=>({message_type:'group',group_id:123,user_id:55,self_id:99,message_id:id,message:[{type:'at',data:{qq:'99'}},{type:'text',data:{text}}],sender:{role:'member',nickname:'tester'},...overrides});
 test('OneBot event → queue → persistent ACP session → QQ reply; duplicate events ignored',async()=>{
@@ -46,7 +46,7 @@ test('persisted session resumes after ACP exit and receives a current MCP endpoi
   const f=fixture(); try {await f.runtime.handleEvent(event('一')); f.acp.emit('exit',{code:1}); await f.runtime.handleEvent(event('二',2)); const resume=f.acp.calls.find(c=>c.method==='session/resume'); assert.ok(resume); assert.match(resume.params.mcpServers[0].url,/^http:\/\/127\.0\.0\.1:/); assert.equal(f.acp.count,1);} finally {await f.close();}
 });
 test('non-owner cannot change models or clear session; model cannot forge role',async()=>{
-  const f=fixture(); try { await f.runtime.handleCommand(event('#dsh 清空')); assert.match(f.sent.at(-1).text,/主人权限/); assert.equal(f.acp.calls.length,0); const ctx=f.runtime.context(event('x')); assert.equal(ctx.role,'member'); await assert.rejects(f.runtime.executeTool('qzone_post',{text:'x'},{...ctx,turnId:'fake'})); } finally {await f.close();}
+  const f=fixture(); try { await f.runtime.handleCommand(event('#dsh 清空')); assert.match(f.sent.at(-1).text,/当前身份没有操作权限/); assert.equal(f.acp.calls.length,0); const ctx=f.runtime.context(event('x')); assert.equal(ctx.role,'member'); await assert.rejects(f.runtime.executeTool('qzone_post',{text:'x'},{...ctx,turnId:'fake'})); } finally {await f.close();}
 });
 test('help menu only covers deployment and status',async()=>{
   const f=fixture(); try {
@@ -97,7 +97,7 @@ test('owner creates and binds a persona card; the next turn uses its prompt',asy
 test('non-owner cannot create or bind persona cards',async()=>{
   const f=fixture(); try {
     await f.runtime.handleCommand(event('#dsh 人格卡 新增 越权|提示词'));
-    assert.match(f.sent.at(-1).text,/主人权限/);
+    assert.match(f.sent.at(-1).text,/当前身份没有操作权限/);
     assert.equal(f.runtime.personas.list({chatId:'group:123',senderId:'55',role:'member'}).length,0);
   } finally {await f.close();}
 });
@@ -119,11 +119,11 @@ test('update refuses installs without git metadata',async()=>{
   try {
     const privateEvent={message_type:'private',user_id:10001,self_id:99,message_id:1,message:[{type:'text',data:{text:'#dsh 更新'}}],sender:{nickname:'owner'}};
     await f.runtime.handleCommand(privateEvent);
-    assert.match(f.sent.at(-1).text,/不是 Git 仓库/);
+    assert.match(f.sent.at(-1).text,/操作未完成，请主人在本机检查状态与配置/);
   } finally {await f.close();}
 });
 test('scheduler reevaluates owner permissions and passes trusted stored context',async()=>{  const f=fixture({scheduler:{enabled:true,intervalMs:60000}}); try {
-    const ctx={chatId:'group:123',senderId:'10001',role:'master'};
+    const ctx={chatId:'group:123',selfId:'99',senderId:'10001',role:'master',storageKey:'99:group:123'};
     f.runtime.scheduler.schedule({kind:'text_send',runAt:Date.now(),payload:{text:'定时消息'}},ctx); await f.runtime.scheduler.tick(); assert.equal(f.sent.at(-1).text,'定时消息');
     f.runtime.scheduler.schedule({kind:'text_send',runAt:Date.now(),payload:{text:'不应发送'}},ctx); f.config.permissions.masters=[]; await f.runtime.scheduler.tick(); assert.ok(!f.sent.some(s=>s.text==='不应发送'));
   } finally {await f.close();}
@@ -146,7 +146,8 @@ test('a failed turn insert still releases the MCP grant for the next message',as
       return prepare(sql);
     };
     await f.runtime.handleEvent(event('第一句'));
-    assert.match(f.sent.at(-1).text,/disk full/);
+    assert.equal(f.sent.at(-1).text,'对话未完成：操作未完成，请主人在本机检查状态与配置');
+    assert.ok(!f.sent.some(item=>item.text.includes('disk full')));
     await f.runtime.handleEvent(event('第二句',2));
     assert.match(f.sent.at(-1).text,/你好，已收到/);
   } finally {await f.close();}
@@ -182,20 +183,47 @@ test('tool results strip internal ids and local absolute paths',async()=>{
       nested:{path:'C:\\secret\\a.txt', keep:'ok'},
       list:[{chat_id:'group:1', source_chat_id:'private:2', value:'x'}],
     });
-    assert.deepEqual(safe, {
-      id:1, file:'[local path]',
-      nested:{path:'[local path]', keep:'ok'},
-      list:[{value:'x'}],
-    });
+    assert.deepEqual(safe, {ok:true});
   } finally {await f.close();}
 });
 test('free model sensitive-input guard remains active when its warning is disabled',async()=>{
   const f=fixture({models:{allowFree:true,freePromptWarning:false}}); try {
     f.runtime.sessions.ensure=async()=>{
-      f.runtime.db.prepare('INSERT INTO sessions(chat_id,chat_type,session_id,model,created_at,updated_at) VALUES(?,?,?,?,?,?)').run('group:123','group','free',JSON.stringify(['our-free-model','kilo-auto/free']),Date.now(),Date.now());
+      f.runtime.db.prepare('INSERT INTO sessions(chat_id,chat_type,session_id,model,created_at,updated_at) VALUES(?,?,?,?,?,?)').run('99:group:123','group','free',JSON.stringify(['our-free-model','kilo-auto/free']),Date.now(),Date.now());
       return {sessionId:'free',configOptions:options()};
     };
     await f.runtime.handleEvent(event('密码: abcdefghijk'));
-    assert.equal(f.acp.prompts,0); assert.match(f.sent.at(-1).text,/不能使用免费模型/);
+    assert.equal(f.acp.prompts,0); assert.equal(f.sent.at(-1).text,'对话未完成：内容包含敏感信息，已拒绝处理');
   } finally {await f.close();}
+});
+
+
+test('same message id from different bots is not deduplicated and storage identities remain separate',async()=>{
+  const f=fixture();try{
+    const one=event('来自账号一',7,{self_id:99});
+    const two=event('来自账号二',7,{self_id:88,message:[{type:'at',data:{qq:'88'}},{type:'text',data:{text:'来自账号二'}}]});
+    await Promise.all([f.runtime.handleEvent(one),f.runtime.handleEvent(two)]);
+    assert.equal(f.acp.prompts,2);
+    assert.equal(f.runtime.db.prepare('SELECT COUNT(*) n FROM sessions').get().n,2);
+    assert.equal(f.runtime.db.prepare('SELECT COUNT(*) n FROM message_dedup').get().n,2);
+    assert.deepEqual(new Set(f.sent.filter(x=>x.text==='你好，已收到。').map(x=>x.context.selfId)),new Set(['99','88']));
+  }finally{await f.close();}
+});
+
+test('an earlier queued turn keeps its event context after a newer same-bot event arrives',async()=>{
+  const f=fixture();try{
+    let release;const gate=new Promise(resolve=>{release=resolve;});let started;
+    const entered=new Promise(resolve=>{started=resolve;});let count=0;
+    f.acp.behavior=async(params)=>{
+      if(++count===1){started();await gate;}
+      f.acp.emit('update',{sessionId:params.sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'固定上下文'}}});
+      return {stopReason:'end_turn'};
+    };
+    const first=f.runtime.handleEvent(event('第一轮',21,{marker:'first'}));await entered;
+    const second=f.runtime.handleEvent(event('第二轮',22,{marker:'second'}));
+    release();await Promise.all([first,second]);
+    const replies=f.sent.filter(item=>item.text==='固定上下文');
+    assert.equal(replies.length,2);
+    assert.deepEqual(replies.map(item=>item.context.event.marker),['first','second']);
+  }finally{await f.close();}
 });

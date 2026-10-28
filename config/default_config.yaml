@@ -58,10 +58,15 @@ learning:
   autoReflect: false
   requireApproval: true
   maxCandidatesPerDay: 3
+  feedbackCooldownMs: 3000
+  maxFeedbackPerChatPerDay: 100
+  feedbackRetentionDays: 90
 stickers:
   enabled: false
   autoCollect: false
   maxPerGroupPerHour: 10
+  maxStoreBytes: 268435456
+  maxStoreFiles: 2000
   maxBytes: 2097152
 letters:
   enabled: false
@@ -75,6 +80,9 @@ media:
   maxBytes: 8388608
   timeoutMs: 15000
   ttlHours: 24
+  maxCacheBytes: 134217728
+  maxDownloadsPerChatPerHour: 60
+  cleanupIntervalMs: 300000
   proxyUrl: ''
 logging:
   includeContent: false
